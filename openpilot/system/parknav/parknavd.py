@@ -122,6 +122,10 @@ def update_gps(state: ParkNavEstimator, sm, destination: tuple[float, float] | N
 
   if gps.hasFix and 0. <= gps.bearingAccuracyDeg < MAX_BEARING_ACCURACY and math.isfinite(gps.bearingDeg) and abs(gps.speed) > MIN_GPS_HEADING_SPEED:
     gps_bearing = math.radians(gps.bearingDeg)
+    # GNSS reports course over ground, so reversing reads 180 deg off the vehicle
+    # heading. Keep the anchor on the half of the circle facing the destination.
+    if destination is not None and abs(wrap_angle(gps_bearing - math.atan2(-state.pos_ned[1], -state.pos_ned[0]))) > math.pi / 2:
+      gps_bearing = wrap_angle(gps_bearing + math.pi)
     if state.yaw_initialized and state.yaw_valid:
       # Consume each course measurement once. The first fixes the arbitrary NED origin.
       if state.heading_anchored:

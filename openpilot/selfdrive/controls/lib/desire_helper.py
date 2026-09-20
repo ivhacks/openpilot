@@ -8,21 +8,18 @@ class DesireHelper:
     self.turn_pulsed = False
 
   def update(self, carstate, lateral_active):
-    if not lateral_active or carstate.leftBlinker == carstate.rightBlinker:
+    if not lateral_active or not carstate.leftBlinker or carstate.rightBlinker:
       self.desire = log.Desire.none
       self.turn_pulsed = False
       return
 
-    turn = log.Desire.turnLeft if carstate.leftBlinker else log.Desire.turnRight
-
     if self.turn_pulsed:
-      self.desire = turn
+      self.desire = log.Desire.turnLeft
       return
 
-    blindspot_detected = carstate.leftBlindspot if carstate.leftBlinker else carstate.rightBlindspot
-    if blindspot_detected:
+    if carstate.leftBlindspot:
       self.desire = log.Desire.none
       return
 
-    self.desire = turn
+    self.desire = log.Desire.turnLeft
     self.turn_pulsed = True
