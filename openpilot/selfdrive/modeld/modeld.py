@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from collections import deque
 from collections.abc import Callable
 import base64
 import ctypes
@@ -45,11 +46,13 @@ SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
 LAT_SMOOTH_SECONDS = 0.0
 LONG_SMOOTH_SECONDS = 0.3
 MIN_LAT_CONTROL_SPEED = 0.3
+TURN_CURVATURE_WINDOW = 20
+TURN_CURVATURE_THRESHOLD = 0.3
 BIG_MODEL_TIMEOUT = 60
 
 
 def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.ModelDataV2.Action,
-                          lat_action_t: float, long_action_t: float, v_ego: float,
+                          lat_action_t: float, long_action_t: float, v_ego: float, curvature_history: deque,
                           desire=log.Desire.none) -> log.ModelDataV2.Action:
   if 'action' not in model_output:
     plan = model_output['plan'][0]
@@ -71,7 +74,22 @@ def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.
   if MIN_LAT_CONTROL_SPEED < v_ego < NAV_MAX_SPEED and desire in (log.Desire.turnLeft, log.Desire.turnRight):
     path_curvature = curvature_from_path(model_output['plan'][0, :, Plan.POSITION])
     if path_curvature is not None:
+      if curvature_history and curvature_history[-1][0] != desire:
+        curvature_history.clear()
+      curvature_history.append((desire, path_curvature))
       desired_curvature = path_curvature
+      if desire == log.Desire.turnLeft:
+        strongest_curvature = min(curvature for _, curvature in curvature_history)
+        if strongest_curvature < -TURN_CURVATURE_THRESHOLD:
+          desired_curvature = strongest_curvature
+      else:
+        strongest_curvature = max(curvature for _, curvature in curvature_history)
+        if strongest_curvature > TURN_CURVATURE_THRESHOLD:
+          desired_curvature = strongest_curvature
+    else:
+      curvature_history.clear()
+  else:
+    curvature_history.clear()
 
   stop = should_stop(v_ego, desired_accel)
   desired_accel = smooth_value(desired_accel, prev_action.desiredAcceleration, LONG_SMOOTH_SECONDS)
@@ -300,6 +318,7 @@ def main(demo=False):
                   "carControl", "lateralDelay", "parkNavSignal"])
 
   publish_state = PublishState()
+  curvature_history = deque(maxlen=TURN_CURVATURE_WINDOW)
   params = Params()
   chestnut_state = ChestnutGpuState(pm, model.chestnut) if CHESTNUT else None
 
@@ -437,7 +456,7 @@ def main(demo=False):
       drivingdata_send = messaging.new_message('drivingModelData')
       posenet_send = messaging.new_message('cameraOdometry')
 
-      action = get_action_from_model(model_output, prev_action, lat_action_t, long_action_t, v_ego, desire)
+      action = get_action_from_model(model_output, prev_action, lat_action_t, long_action_t, v_ego, curvature_history, desire)
       prev_action = action
       fill_model_msg(modelv2_send, model_output, action,
                      publish_state, meta_main.frame_id, meta_extra.frame_id, frame_id,
@@ -452,6 +471,8 @@ def main(demo=False):
       pm.send('modelV2', modelv2_send)
       pm.send('drivingModelData', drivingdata_send)
       pm.send('cameraOdometry', posenet_send)
+    else:
+      curvature_history.clear()
     last_vipc_frame_id = meta_main.frame_id
 
 if __name__ == "__main__":
