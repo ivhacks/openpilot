@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-PATH_LOOKAHEAD_METERS = 5.0
+PATH_LOOKAHEAD_METERS = 4.0
 
 
 def curvature_from_path(positions: np.ndarray) -> float | None:
